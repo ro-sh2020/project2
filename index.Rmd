@@ -46,88 +46,162 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Roshan Shaik, rms4924
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+Insurance costs are one of the most important aspects of the healthcare industry. This dataset explores six variables, with one of them being individual medical costs billed by health insurance. The other five variables are age, sex, bmi (body mass index), number of children, whether the individual is a smoker, and region (residential area). The original purpose of this data may have been to predict insurace costs based on certain medical statistics of individuals, but I wanted to look into whether those variables can predict if an individual is a smoker or not.  This could shed some light on how a person's lifestyle dictates their use of cigarettes/tobacco. The dataset contains 1338 observations and was extracted from Kaggle. Of those 1338 individuals, 274 of them are smokers and 1064 are not.  
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
-
-# if your dataset needs tidying, do so here
-
-# any other code here
+insurance <- read_csv("insurance.csv")
+insurance_data <- insurance %>% mutate(smoker = ifelse(smoker == "no",0,1))
+head(insurance)
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+sil_width <- vector()
+for(i in 2:10){  
+  pam_fit <- pam(insurance, k=i)
+  sil_width[i] <- pam_fit$silinfo$avg.width 
+}
+ggplot() + geom_line(aes(x=1:10,y=sil_width)) + scale_x_continuous(name = "k",breaks = 1:10)
+pam_insurance <- insurance %>% pam(k=2)
+pam_insurance$silinfo$avg.width
+
+library(GGally)
+insurance %>% mutate(cluster = as.factor(pam_insurance$clustering)) %>% ggpairs(cols = 1:7, aes(color = cluster))
 ```
 
-Discussion of clustering here
+By looking at the graph, the highest silhouette width is present when k=2. So using the PAM function, we know that the average silhouette is 0.73 for 2 clusters. Since the average silhouetter width is greater than 0.71, we can conclude that a strong structure has been found. 
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+numeric_insurance <- insurance %>% select(age,bmi,charges)
+pca_insurance <- princomp(numeric_insurance, cor = T)
+summary(pca_insurance, loadings = T)
 ```
 
-Discussions of PCA here. 
+```{R}
+library(factoextra)
+fviz_pca_biplot(pca_insurance)
+```
+
+Principle component 1 shows that individuals with higher health insurance charges tend to be higher in age (older) and have a higher body mass index. Principle component 2 shows that older individuals tend to have a lower body mass index and a higher insurance charge. 77% of the variance is explained by the first 2 principle components. 
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+fit <- glm(smoker ~ age + bmi + charges, data = insurance_data, family = "binomial")
+prob_reg <- predict(fit, new_data = insurance, type = "response")
+class_diag(prob_reg, insurance_data$smoker, positive = 1)
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+k <- 11
+data <- sample_frac(insurance_data) 
+folds <- rep(1:k, length.out = nrow(data))
+diags <- NULL
+
+i = 1
+for (i in 1:k){
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$smoker
+    
+    fit <- glm(smoker ~ age + bmi + charges, data = test, family = "binomial")
+    
+    probs <- predict(fit, test, type = "response")
+    
+    diags <- rbind(diags, class_diag(probs, truth, positive = 1))
+}
+summarize_all(diags,mean)
 ```
 
-Discussion here
-
+The AUC for the linear model is 0.986. After cross validation, the AUC slightly changes to 0.987. Since it is between 0.8 and 0.9, this AUC is considered good. This shows that the factors do a good job of distinguishing between a smoker and a non-smoker. 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+knn_fit <- knn3(smoker ~ age+bmi+charges, data= insurance_data)
+y_hat_knn <- predict(knn_fit, insurance_data)[, 2]
+class_diag(y_hat_knn, insurance_data$smoker, positive = 1)
 ```
 
 ```{R}
-# cross-validation of np classifier here
+k = 6
+data <- sample_frac(insurance_data)  
+folds <- rep(1:k, length.out = nrow(data))
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$smoker
+    
+    fit <- knn3(smoker ~ age + bmi + charges, data = test)
+    
+    probs <- predict(fit, test)[, 2]
+    
+    diags <- rbind(diags, class_diag(probs, truth, positive = 1))
+}
+summarize_all(diags, mean)
 ```
 
-Discussion
+The AUC using k nearest means is 0.987. After cross validation, the AUC slightly decreases to 0.986, which shows that there are signs of overfitting. Again, since the AUC is between 0.8 and 0.9, it is considered good. My nonparametric model very similar to the linear model in its cross validation performance. 
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit <- lm(smoker ~ ., data = insurance_data)
+yhat <- predict(fit)
+mean((insurance_data$smoker - yhat)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+k = 6  
+data <- insurance_data[sample(nrow(insurance_data)), ]   
+folds <- cut(seq(1:nrow(insurance_data)), breaks = k, labels = F) 
+diags <- NULL
+
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    ## Fit linear regression model to training set
+    fit <- lm(smoker ~ ., data = train)
+    ## Get predictions/y-hats on test set (fold i)
+    yhat <- predict(fit, newdata = test)
+    ## Compute prediction error (MSE) for fold i
+    diags <- mean((test$smoker - yhat)^2)
+}
+mean(diags)
 ```
 
-Discussion
+Since the cross validation has an average mean squared almost equivalent to the regression model, there does not seem to be any overfitting. Both of them have an average mean squared of 0.045. 
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3", required = F)
 ```
 
 ```{python}
-# python code here
+insurance = r.insurance
+insurance.bmi.mean()
+insurance[insurance.bmi>30.7].charges.mean()
+insurance[insurance.bmi<30.7].charges.mean()
 ```
 
-Discussion
+The insurance dataset was passed through a python code chunk. I wanted to calculate the average charge for individuals with a bmi higher than average (30.7). After running the code, it seems like the mean charges for indiviuals with a bmi greater than 30.7 is approximately 15772. The mean charges for individuals with bmi lower than 30.7 is 10969. 
 
 ### Concluding Remarks
 
